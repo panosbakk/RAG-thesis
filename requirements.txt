@@ -1,0 +1,4 @@
+numpy
+pypdfium2
+requests
+streamlit

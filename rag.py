@@ -4,7 +4,8 @@ import math
 from collections import Counter
 import requests
 import numpy as np
-from pypdf import PdfReader
+import pypdfium2 as pdfium
+import streamlit as st
 
 #Step 1: Load and extract text from local PDFs
 PDF_DIR = "./pdfpath"
@@ -19,17 +20,19 @@ def load_files(folder_path):
         if filename.lower().endswith(".pdf"):
             filepath = os.path.join(folder_path, filename)
             try:
-                reader = PdfReader(filepath)
+                pdf= pdfium.PdfDocument(filepath)
                 full_text = ""
-                for page_num, page in enumerate(reader.pages):
-                    text = page.extract_text()
+                for page in pdf:
+                    textpage = page.get_textpage()
+                    text = textpage.get_text_range()
                     if text:
                         full_text += text + "\n"
+                
                 if full_text.strip():
                     documents.append({"source": filename, "text": full_text})
-                    print(f"[Loaded {filename} ({len(full_text)} characters])")
+                    print(f"[Loaded (pypdfium2)] {filename} ({len(full_text)} characters)")
                 else:
-                    print(f"[Warning {filename} ({len(full_text)}) contained no text.]")
+                    print(f"[Warning] {filename} contained no extractable text.")
             except Exception as e:
                 print(f"[Error] Failed to read {filename}: {e}")
     return documents
@@ -39,14 +42,14 @@ def tokenize(text):
     text = text.lower()
     return re.findall(r'\b[a-zA-ZΑ-Ωα-ω0-9]{3,}\b', text)
 
-def chunk_text(text, source_name, max_words=100, overlap=20):
+def chunk_text(text, source_name, max_words, overlap):
     words = tokenize(text)
     chunks = []
     for i in range(0, len(words), max_words - overlap):
         chunk_words = words[i:i + max_words]
         if len(chunk_words) > 10:
             chunk_text_str = " ".join(chunk_words)
-            chunks.append({"source": source_name, "content":chunk_text_str})
+            chunks.append({"source": source_name, "content":chunk_text_str, "tokens":chunk_words})
     return chunks
 
 #Step 3 : scratch vector space & embeddings(TF-IDF Vectorizer)
@@ -60,7 +63,7 @@ class ScratchVectorizer:
     def fit(self, corpus_chunks):
         vocab_set = set()
         for chunk in corpus_chunks:
-            for word in tokenize(chunk["content"]):
+            for word in chunk["tokens"]:
                 vocab_set.add(word)
         self.vocab_list = sorted(list(vocab_set))
         self.vocabulary = {word: idx for idx, word in enumerate(self.vocab_list)}
@@ -69,7 +72,7 @@ class ScratchVectorizer:
         self.N = len(corpus_chunks)
         df = np.zeros(vocab_size)
         for chunk in corpus_chunks:
-            unique_words = set(tokenize(chunk["content"]))
+            unique_words = set(chunk["tokens"])
             for word in unique_words:
                 if word in self.vocabulary:
                     df[self.vocabulary[word]] += 1
@@ -116,17 +119,10 @@ def retrieve_top_k(query, vectorizer, chunk_embeddings, chunks, k=3):
 
 #Step 5: the LLM 
 def ask_llm(query, retrieved_chunks):
-    """Στέλνει το context και την ερώτηση στο LM Studio μέσω του OpenAI-compatible API"""
-    
-    # 1. Δόμηση του context
     context_text = "\n\n".join([f"Source: {chunk['source']}\n{chunk['content']}" for chunk in retrieved_chunks])
-    
-    # 2. LM Studio URL (η προεπιλεγμένη πόρτα είναι η 1234)
-    url = "http://localhost:1234/v1/chat/completions"
-    
-    # 3. Payload σε OpenAI format (System + User messages)
+    url = "http://host.docker.internal:1234/v1/chat/completions"
     payload = {
-        "model": "liquid/lfm2-1.2b",  # Το όνομα του μοντέλου που έχεις φορτώσει στο LM Studio
+        "model": "liquid/lfm2-1.2b", 
         "messages": [
             {
                 "role": "system", 
@@ -145,54 +141,51 @@ def ask_llm(query, retrieved_chunks):
         response = requests.post(url, json=payload)
         if response.status_code == 200:
             result_json = response.json()
-            # Εξαγωγή της απάντησης από το OpenAI-compatible response structure
             return result_json["choices"][0]["message"]["content"]
         else:
             return f"Error from LM Studio: {response.text}"
     except Exception as e:
         return f"Could not connect to LM Studio server: {e}"
 
-    
-if __name__ == "__main__":
-    raw_docs = load_files("./pdfpath")
-    if raw_docs:
-        all_chunks = []
-        for doc in raw_docs:
-            all_chunks.extend(chunk_text(doc["text"], doc["source"], max_words=80, overlap=15))
+#The main loop running all the components, including Streamlit UI
+@st.cache_resource
+def init_rag():
+    raw_docs = load_files(PDF_DIR)
+    if not raw_docs:
+        return None, None, []
+    all_chunks = []
+    for doc in raw_docs:
+        all_chunks.extend(chunk_text(doc["text"], doc["source"], max_words=80, overlap=15))
 
-        vectorizer = ScratchVectorizer()
-        vectorizer.fit(all_chunks)
-        chunk_embeddings = np.array([vectorizer.transform(chunk["content"]) for chunk in all_chunks])
-        
-        print("\n" + "="*60)
-        print("The app is ready...")
-        print("Type 'exit' or 'quit' to leave the app...")
-        print("="*60 + "\n")
+    if not all_chunks:
+        return None, None, []
 
-        while True:
-            try:
-                user_query = input("What can i do for you today? \n").strip()
-            
-                if not user_query:
-                    continue
-                
-                if user_query.lower() in ["exit", "quit"]:
-                    print("\nExiting the app...")
-                    break
-            
-                print("Searching in the given PDFs...")
-                top_results = retrieve_top_k(user_query, vectorizer, chunk_embeddings, all_chunks, k=2)
-                for r in top_results:
-                    print(f"   -> [Match: {r['source']} | Score: {r['score']:.4f}]")
-                
-                print("Producing the LLM response...")
-                final_answer = ask_llm(user_query, top_results)
-            
-                print("\n" + "-"*50)
-                print("Answer: ")
-                print(final_answer)
-                print("-"*50 + "\n")
-            
-            except KeyboardInterrupt:
-                print("\n Exiting...")
-                break
+    vectorizer = ScratchVectorizer()
+    vectorizer.fit(all_chunks)
+    chunk_embeddings = np.array([vectorizer.transform(chunk["content"]) for chunk in all_chunks])
+    return vectorizer, chunk_embeddings, all_chunks
+
+st.set_page_config(page_title="RAG Chat",layout="wide")
+st.title("Local AI assistant")
+st.markdown("Query your local PDFs")
+vectorizer, chunk_embeddings, all_chunks = init_rag()
+if not vectorizer or not all_chunks:
+    st.error(f"No PDFS found in {PDF_DIR}. Try putting PDFs and restart the container")
+    st.stop()
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+user_query = st.chat_input("Ask something about your PDF Documents")
+if user_query:
+    st.session_state.messages.append({"role":"user", "content":user_query})
+    with st.chat_message("user"):
+        st.markdown(user_query)
+    with st.chat_message("assistant"):
+        with st.spinner("Searching for answers in the PDFs..."):
+            top_results = retrieve_top_k(user_query, vectorizer, chunk_embeddings, all_chunks, k=2)
+            answer = ask_llm(user_query, top_results)
+            st.markdown(answer)
+            st.session_state.messages.append({"role":"assistant", "content":answer})
+

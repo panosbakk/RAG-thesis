@@ -1,0 +1,13 @@
+services:
+  rag-chat-app:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./pdfpath:/app/pdfpath
+    environment:
+      # Επικοινωνία με το LM Studio στον Windows Host
+      - LM_STUDIO_URL=http://host.docker.internal:1234/v1/chat/completions
+      - MODEL_NAME=liquid/lfm2-1.2b
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
