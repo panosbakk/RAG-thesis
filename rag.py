@@ -122,7 +122,7 @@ def ask_llm(query, retrieved_chunks):
     context_text = "\n\n".join([f"Source: {chunk['source']}\n{chunk['content']}" for chunk in retrieved_chunks])
     url = "http://host.docker.internal:1234/v1/chat/completions"
     payload = {
-        "model": "liquid/lfm2-1.2b", 
+        "model": "nvidia/nemotron-3-nano-4b", 
         "messages": [
             {
                 "role": "system", 
@@ -184,7 +184,7 @@ if user_query:
         st.markdown(user_query)
     with st.chat_message("assistant"):
         with st.spinner("Searching for answers in the PDFs..."):
-            top_results = retrieve_top_k(user_query, vectorizer, chunk_embeddings, all_chunks, k=2)
+            top_results = retrieve_top_k(user_query, vectorizer, chunk_embeddings, all_chunks, k=4)
             answer = ask_llm(user_query, top_results)
             st.markdown(answer)
             st.session_state.messages.append({"role":"assistant", "content":answer})

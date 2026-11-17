@@ -4,10 +4,10 @@ services:
     ports:
       - "8501:8501"
     volumes:
-      - ./pdfpath:/app/pdfpath
+      - ./pdfpath:/rag/pdfpath
     environment:
       # Επικοινωνία με το LM Studio στον Windows Host
       - LM_STUDIO_URL=http://host.docker.internal:1234/v1/chat/completions
-      - MODEL_NAME=liquid/lfm2-1.2b
+      - MODEL_NAME=nvidia/nemotron-3-nano-4b
     extra_hosts:
       - "host.docker.internal:host-gateway"

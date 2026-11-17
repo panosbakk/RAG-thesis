@@ -14,5 +14,5 @@ COPY . .
 EXPOSE 8501
 
 #Εντολή τρεξίματος της εφαρμογής
-CMD ["streamlit", "run", "rag.py", "--server.address=0.0.0.0", "--server.port=8501"]FROM python:3.10-slim
+CMD ["streamlit", "run", "rag.py", "--server.address=0.0.0.0", "--server.port=8501"]
 
